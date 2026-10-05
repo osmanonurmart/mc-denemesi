@@ -112,6 +112,8 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
 .sku-card .inner { border: 0; border-radius: 0 0 10px 10px; }
 .sku-card.none { padding: 12px 14px; color: var(--muted); }
 .note { font-size: 12px; color: var(--muted); padding: 8px 14px; border-top: 1px solid var(--line); }
+td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
+.sayim-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 @media (prefers-reduced-motion: no-preference) { .stat, .btn { transition: border-color .15s, background .15s; } }
 </style>
 
@@ -133,8 +135,24 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
 
   <nav class="tabs" id="tabs" role="tablist" hidden>
     <button class="tab" type="button" role="tab" data-t="sku" aria-selected="true">SKU sorgula</button>
+    <button class="tab" type="button" role="tab" data-t="sayim" aria-selected="false">Sayım açıklama</button>
     <button class="tab" type="button" role="tab" data-t="irs" aria-selected="false">İrsaliye listesi</button>
   </nav>
+
+  <section class="panel" id="sayimPanel" hidden>
+    <div class="sku-input">
+      <label for="sayimIn" class="hint">Sayım tablosunu Excel’den başlık satırıyla birlikte yapıştır (MaddeKodu, Envanter, Sayım Miktarı, Fazla Miktar, Eksik Miktar…). Her satır için fark bulunur, ürünün irsaliyeleri mal kabulle karşılaştırılır ve açıklama aynı sırayla yazılır.</label>
+      <textarea id="sayimIn" placeholder="MaddeKodu&#9;Madde Açıklaması&#9;Renk Açıklaması&#9;Envanter&#9;Sayım Miktarı&#9;Fazla Miktar&#9;Eksik Miktar&#9;adet&#9;açıklama&#10;1BTNCR0106150.&#9;Titanium Profesional Derin Tencere 26 CM&#9;Siyah&#9;50&#9;0&#9;&#9;50"></textarea>
+      <div class="drop-row">
+        <button class="btn" id="sayimGo" type="button">Açıklamaları oluştur</button>
+        <button class="btn ghost" id="sayimCopyCol" type="button" hidden>Açıklama sütununu kopyala</button>
+        <button class="btn ghost" id="sayimCopyAll" type="button" hidden>Tabloyu kopyala</button>
+        <span class="count" id="sayimCount"></span>
+      </div>
+      <div class="hint">Kural: Ürün gelmemiş ama irsaliye tam kapatılmışsa eksik çıkar. Ürün gelmiş ama irsaliye eksik ya da 0 kapatılmışsa fazla çıkar. Gelip gelmediği mal kabul listesinden anlaşılır.</div>
+    </div>
+    <div class="table-box" id="sayimOut" hidden></div>
+  </section>
 
   <section class="panel" id="skuPanel" hidden>
     <div class="sku-input">
@@ -317,6 +335,7 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
     showTab(has ? tab : null);
     drawStats(); draw();
     if ($('#skus').value.trim()) skuQuery();
+    if ($('#sayimIn').value.trim()) sayimRun();
   }
 
   function drawStats() {
@@ -394,15 +413,126 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
     if (t) tab = t;
     document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', b.dataset.t === tab));
     $('#skuPanel').hidden = !t || tab !== 'sku';
+    $('#sayimPanel').hidden = !t || tab !== 'sayim';
     $('#irsPanel').hidden = !t || tab !== 'irs';
   }
+
+  // Sayım dökümündeki "1BTNCR0106150." biçimi: madde kodu + renk kodu + beden
+  function splitSku(raw) {
+    raw = raw.trim().toLocaleUpperCase('tr-TR').replace(/İ/g, 'I');
+    const m = /^(\d[A-Z]{5}\d{4})([A-Z0-9]{3})?/.exec(raw.replace(/\.+$/, ''));
+    return { code: m ? m[1] : raw, renk: m && m[2] ? m[2] : '' };
+  }
+
+  // Ürünün geçtiği irsaliyeler, irsaliye başına toplanmış
+  function irsaliyelerOf(code, renk) {
+    const out = [];
+    for (const k of kontrol.values()) {
+      let miktar = 0, eksik = 0, fazla = 0, var_ = false;
+      for (const it of k.items) {
+        if (it.kod.toUpperCase() !== code || (renk && it.renk.toUpperCase() !== renk)) continue;
+        var_ = true; miktar += it.miktar; eksik += it.eksik; fazla += it.fazla;
+      }
+      if (var_) out.push({ irs: k.irs, sevk: k.sevk, kaynak: k.kaynakAd, miktar, eksik, fazla, geldi: teslim.has(k.irs) });
+    }
+    return out.sort((a, b) => a.sevk.localeCompare(b.sevk) || a.irs.localeCompare(b.irs));
+  }
+
+  // ---- Sayım açıklama ----
+  let sayimRows = [], sayimHead = null;
+  const norm = h => h.toLocaleLowerCase('tr-TR').replace(/\s+/g, '');
+  function sayimRun() {
+    const lines = $('#sayimIn').value.replace(/\r/g, '').replace(/\n+$/, '').split('\n');
+    let col = { kod: 0, ad: 1, env: 3, sayim: 4, fazla: 5, eksik: 6 };
+    sayimHead = null;
+    const first = lines[0] ? lines[0].split('\t').map(norm) : [];
+    if (first.some(h => h.includes('maddekodu') || h.includes('envanter'))) {
+      sayimHead = lines.shift().split('\t');
+      const f = test => first.findIndex(test);
+      col = {
+        kod: f(h => h.includes('maddekodu')), ad: f(h => h.includes('maddeaçıklama')),
+        env: f(h => h.includes('envanter')), sayim: f(h => h.includes('sayım')),
+        fazla: f(h => h.includes('fazla')), eksik: f(h => h.includes('eksik')),
+      };
+    }
+    const cell = (c, i) => i >= 0 ? (c[i] || '').trim() : '';
+    sayimRows = lines.map(line => {
+      const c = line.split('\t');
+      const raw = cell(c, col.kod);
+      if (!raw) return { c, bos: true, aciklama: '' };
+      const env = cell(c, col.env), say = cell(c, col.sayim);
+      const fark = env !== '' && say !== '' ? toNum(say) - toNum(env) : toNum(cell(c, col.fazla)) - toNum(cell(c, col.eksik));
+      return { c, raw, ad: cell(c, col.ad), env, say, fark, aciklama: aciklama(raw, fark) };
+    });
+    drawSayim();
+  }
+
+  function aciklama(raw, fark) {
+    const { code, renk } = splitSku(raw);
+    if (!fark) return 'Sayım ile envanter eşit, fark yok.';
+    const irs = irsaliyelerOf(code, renk).filter(x => x.miktar > 0);
+    const kod = renk ? `${code} (renk ${renk})` : code;
+    if (!irs.length) return `${kod} için kontrol listesinde irsaliye bulunamadı.`;
+    const adet = n => `${fmt(n)} adet`;
+    const tarih = x => trDate(x.sevk);
+    if (fark < 0) {
+      const ihtiyac = -fark;
+      // Gelmemiş ama sisteme girmiş (tam ya da kısmen kapatılmış) irsaliyeler
+      const sorun = irs.filter(x => !x.geldi && x.miktar - x.eksik + x.fazla > 0)
+        .map(x => ({ ...x, giren: x.miktar - x.eksik + x.fazla }));
+      if (!sorun.length) return `Her şey doğru yapılmış. ${irs.length} irsaliye kontrol edildi, gelmediği halde stoğa giren irsaliye yok.`;
+      const top = sorun.reduce((a, x) => a + x.giren, 0);
+      const liste = sorun.map(x => `${x.irs} (${tarih(x)}, ${x.eksik ? `${fmt(x.miktar)} gönderildi, ${fmt(x.eksik)} eksik kapatılmış, ${adet(x.giren)} stoğa girmiş` : `${adet(x.giren)} tam kapatılmış`})`).join(', ');
+      let s = `${adet(ihtiyac)} eksik. Şu irsaliyeler kapatılıp stoğa girmiş ama mal kabulde yok, ürün elimize gelmemiş: ${liste}. Toplam ${adet(top)}.`;
+      if (top === ihtiyac) s += ' Eksiğin tamamı bu irsaliyelerden.';
+      else if (top < ihtiyac) s += ` Eksiğin ${adet(top)} kadarı bu irsaliyelerden, kalan ${adet(ihtiyac - top)} irsaliyeyle açıklanamıyor.`;
+      else s += ` İrsaliyelerdeki miktar eksikten ${adet(top - ihtiyac)} daha çok.`;
+      return s;
+    }
+    // Fazla: gelmiş ama eksik / 0 kapatılmış irsaliyeler
+    const sorun = irs.filter(x => x.geldi && x.eksik - x.fazla > 0).map(x => ({ ...x, kayip: x.eksik - x.fazla }));
+    if (!sorun.length) return `Her şey doğru yapılmış. ${irs.length} irsaliye kontrol edildi, elimize gelip eksik kapatılan irsaliye yok.`;
+    const top = sorun.reduce((a, x) => a + x.kayip, 0);
+    const liste = sorun.map(x => `${x.irs} (${tarih(x)}, ${fmt(x.miktar)} gönderildi, ${adet(x.kayip)} eksik kapatılmış)`).join(', ');
+    let s = `${adet(fark)} fazla. Şu irsaliyeler mal kabulde var, ürün elimize gelmiş ama eksik kapatılmış: ${liste}. Toplam ${adet(top)}.`;
+    if (top === fark) s += ' Fazlanın tamamı bu irsaliyelerden.';
+    else if (top < fark) s += ` Fazlanın ${adet(top)} kadarı bu irsaliyelerden, kalan ${adet(fark - top)} irsaliyeyle açıklanamıyor.`;
+    else s += ` İrsaliyelerdeki miktar fazladan ${adet(top - fark)} daha çok.`;
+    return s;
+  }
+
+  function drawSayim() {
+    const dolu = sayimRows.filter(r => !r.bos);
+    $('#sayimCount').textContent = dolu.length ? `${dolu.length} satır işlendi` : 'Yapıştırılan tabloda ürün satırı bulunamadı.';
+    $('#sayimCopyCol').hidden = $('#sayimCopyAll').hidden = !dolu.length;
+    $('#sayimOut').hidden = !sayimRows.length;
+    $('#sayimOut').innerHTML = `<table><thead><tr><th class="num">Sıra</th><th>Madde Kodu</th><th>Açıklama</th><th class="num">Envanter</th><th class="num">Sayım</th><th>Fark</th><th>Sonuç</th></tr></thead><tbody>${
+      sayimRows.map((r, i) => r.bos ? `<tr><td class="num">${i + 1}</td><td colspan="6" class="hint">boş satır</td></tr>` :
+        `<tr><td class="num">${i + 1}</td><td class="mono">${esc(r.raw)}</td><td>${esc(r.ad)}</td><td class="num">${esc(r.env)}</td><td class="num">${esc(r.say)}</td><td>${r.fark < 0 ? `<span class="pill bad">${fmt(-r.fark)} eksik</span>` : r.fark > 0 ? `<span class="pill warn">${fmt(r.fark)} fazla</span>` : '<span class="pill ok">fark yok</span>'}</td><td class="wrap-cell">${esc(r.aciklama)}</td></tr>`).join('')
+    }</tbody></table>`;
+  }
+
+  function sayimCopy(all) {
+    let txt;
+    if (!all) txt = sayimRows.map(r => r.aciklama).join('\n');
+    else {
+      const head = sayimHead ? sayimHead.slice() : null;
+      const ai = head ? head.findIndex(h => norm(h) === 'açıklama') : -1;
+      const rows = sayimRows.map(r => { const c = r.c.slice(); if (ai >= 0) { while (c.length <= ai) c.push(''); c[ai] = r.aciklama; } else c.push(r.aciklama); return c.join('\t'); });
+      if (head && ai < 0) head.push('açıklama');
+      txt = (head ? [head.join('\t')] : []).concat(rows).join('\n');
+    }
+    navigator.clipboard.writeText(txt).then(() => toast(all ? 'Tablo kopyalandı.' : 'Açıklama sütunu kopyalandı. Excel’de ilk ürün satırının açıklama hücresine yapıştır.'), () => toast('Kopyalanamadı. Tarayıcı panoya erişime izin vermedi.'));
+  }
+  $('#sayimGo').onclick = sayimRun;
+  $('#sayimCopyCol').onclick = () => sayimCopy(false);
+  $('#sayimCopyAll').onclick = () => sayimCopy(true);
 
   function skuQuery() {
     const codes = [...new Set($('#skus').value.toLocaleUpperCase('tr-TR').replace(/İ/g, 'I').split(/[\s,;]+/).filter(Boolean))];
     skuResult = codes.map(raw => {
       // Sayım dökümündeki "1BTNCR0106150." biçimi: madde kodu + renk kodu + beden
-      const m = /^(\d[A-Z]{5}\d{4})([A-Z0-9]{3})?/.exec(raw.replace(/\.+$/, ''));
-      const code = m ? m[1] : raw, renk = m && m[2] ? m[2] : '';
+      const { code, renk } = splitSku(raw);
       const lines = [];
       for (const k of kontrol.values()) {
         const g = new Map();
