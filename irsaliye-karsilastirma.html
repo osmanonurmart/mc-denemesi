@@ -138,7 +138,7 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
 
   <section class="panel" id="skuPanel" hidden>
     <div class="sku-input">
-      <label for="skus" class="hint">SKU kodlarını yaz ya da yapıştır. Boşluk, virgül veya alt satırla ayırabilirsin. Büyük/küçük harf fark etmez.</label>
+      <label for="skus" class="hint">SKU kodlarını yaz ya da yapıştır. Boşluk, virgül veya alt satırla ayırabilirsin. Sayım dökümündeki 1BTNCR0106150. gibi renkli kodlar da olur, o zaman sadece o renk aranır.</label>
       <textarea id="skus" placeholder="1KKASE0127&#10;1KYAST0143&#10;1KTMZL0015"></textarea>
       <div class="drop-row">
         <button class="btn" id="skuGo" type="button">Sorgula</button>
@@ -399,12 +399,15 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
 
   function skuQuery() {
     const codes = [...new Set($('#skus').value.toLocaleUpperCase('tr-TR').replace(/İ/g, 'I').split(/[\s,;]+/).filter(Boolean))];
-    skuResult = codes.map(code => {
+    skuResult = codes.map(raw => {
+      // Sayım dökümündeki "1BTNCR0106150." biçimi: madde kodu + renk kodu + beden
+      const m = /^(\d[A-Z]{5}\d{4})([A-Z0-9]{3})?/.exec(raw.replace(/\.+$/, ''));
+      const code = m ? m[1] : raw, renk = m && m[2] ? m[2] : '';
       const lines = [];
       for (const k of kontrol.values()) {
         const g = new Map();
         for (const it of k.items) {
-          if (it.kod.toUpperCase() !== code) continue;
+          if (it.kod.toUpperCase() !== code || (renk && it.renk.toUpperCase() !== renk)) continue;
           const key = [it.renk, it.beden, it.stok, it.ref].join('|');
           const e = g.get(key) || g.set(key, { ...it, satir: 0, miktar: 0, eksik: 0, fazla: 0 }).get(key);
           e.satir++; e.miktar += it.miktar; e.eksik += it.eksik; e.fazla += it.fazla;
@@ -415,7 +418,7 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
       lines.sort((a, b) => a.sevk.localeCompare(b.sevk) || a.irs.localeCompare(b.irs));
       const sum = (f, d) => lines.filter(l => !d || l.durum === d).reduce((x, l) => x + l[f], 0);
       return {
-        code, lines, ad: lines[0]?.ad || '',
+        code: renk ? `${code} · renk ${renk}` : code, lines, ad: lines[0]?.ad || '',
         irsSay: new Set(lines.map(l => l.irs)).size,
         gonderilen: sum('miktar'), gelen: sum('miktar', 'ok'), gelmeyen: sum('miktar', 'bad'),
         eksik: sum('eksik'), fazla: sum('fazla'),
