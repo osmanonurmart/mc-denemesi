@@ -114,6 +114,13 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
 .note { font-size: 12px; color: var(--muted); padding: 8px 14px; border-top: 1px solid var(--line); }
 td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
 .sayim-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.depots { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.depots summary { cursor: pointer; padding: 10px 14px; font-weight: 600; }
+.depots summary span { font-weight: 400; color: var(--muted); }
+.depot-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px 18px; padding: 4px 14px 14px; }
+.depot-list label { display: flex; gap: 8px; align-items: baseline; font-size: 13px; cursor: pointer; }
+.depot-list label.off { color: var(--muted); text-decoration: line-through; }
+.depot-list small { color: var(--muted); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: no-preference) { .stat, .btn { transition: border-color .15s, background .15s; } }
 </style>
 
@@ -132,6 +139,12 @@ td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
     </div>
     <div class="files" id="files"></div>
   </section>
+
+  <details class="depots" id="depots" hidden>
+    <summary>Kaynak depolar <span id="depotSum"></span></summary>
+    <div class="hint" style="padding:0 14px 6px">İşareti kaldırılan deponun irsaliyeleri (ör. ilk açılıştaki toplu irsaliyeler) bütün sekmelerde hesaba katılmaz.</div>
+    <div class="depot-list" id="depotList"></div>
+  </details>
 
   <nav class="tabs" id="tabs" role="tablist" hidden>
     <button class="tab" type="button" role="tab" data-t="sku" aria-selected="true">SKU sorgula</button>
@@ -224,6 +237,10 @@ td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
   const open = new Set();
 
   const IRS = /^\d+-S-\d+-\d+$/;
+  let haric = new Set();
+  try { haric = new Set(JSON.parse(localStorage.getItem('haricDepolar') || '[]')); } catch (e) {}
+  const aktif = k => !haric.has(k.kaynakKod);
+  const aktifKontrol = () => [...kontrol.values()].filter(aktif);
   const toNum = s => { s = (s || '').trim(); if (!s) return 0; return Number(s.replace(/\./g, '').replace(',', '.')) || 0; };
   const fmt = n => n ? n.toLocaleString('tr-TR') : '';
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -309,13 +326,33 @@ td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
     build();
   }
 
+  function drawDepots() {
+    const d = new Map();
+    for (const k of kontrol.values()) {
+      const x = d.get(k.kaynakKod) || d.set(k.kaynakKod, { kod: k.kaynakKod, ad: k.kaynakAd, n: 0, m: 0, ilk: k.sevk, son: k.sevk }).get(k.kaynakKod);
+      x.n++; x.m += k.miktar; if (k.sevk < x.ilk) x.ilk = k.sevk; if (k.sevk > x.son) x.son = k.sevk;
+    }
+    const list = [...d.values()].sort((a, b) => b.n - a.n);
+    $('#depots').hidden = !list.length;
+    const off = list.filter(x => haric.has(x.kod)).length;
+    $('#depotSum').textContent = `${list.length} depo${off ? `, ${off} tanesi hariç` : ', hepsi dahil'}`;
+    $('#depotList').innerHTML = list.map(x => `<label class="${haric.has(x.kod) ? 'off' : ''}"><input type="checkbox" id="dp-${esc(x.kod)}" data-kod="${esc(x.kod)}" ${haric.has(x.kod) ? '' : 'checked'}><span><b>${esc(x.kod)}</b> ${esc(x.ad)}<br><small>${x.n} irsaliye · ${fmt(x.m) || 0} adet · ${trDate(x.ilk)}${x.son !== x.ilk ? ' – ' + trDate(x.son) : ''}</small></span></label>`).join('');
+  }
+  $('#depotList').onchange = e => {
+    const kod = e.target.dataset.kod; if (!kod) return;
+    e.target.checked ? haric.delete(kod) : haric.add(kod);
+    try { localStorage.setItem('haricDepolar', JSON.stringify([...haric])); } catch (err) {}
+    build();
+  };
+
   function drawFiles() {
     $('#files').innerHTML = loaded.map(e => `<div class="file"><span class="tag${e.err ? ' err' : ''}">${esc(e.type)}</span><b>${esc(e.name)}</b>${e.n ? `<span class="hint">${fmt(e.n)} irsaliye</span>` : ''}${e.err ? '<span class="hint">Bu dosya kontrol listesi ya da teslim listesi biçiminde değil.</span>' : ''}</div>`).join('');
     $('#clear').hidden = !loaded.length;
   }
 
   function build() {
-    const all = new Set([...kontrol.keys(), ...teslim.keys()]);
+    drawDepots();
+    const all = new Set([...kontrol.keys(), ...teslim.keys()].filter(irs => !kontrol.has(irs) || aktif(kontrol.get(irs))));
     rows = [...all].map(irs => {
       const k = kontrol.get(irs), s = teslim.get(irs);
       return {
@@ -427,13 +464,13 @@ td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
   // Ürünün geçtiği irsaliyeler, irsaliye başına toplanmış
   function irsaliyelerOf(code, renk) {
     const out = [];
-    for (const k of kontrol.values()) {
+    for (const k of aktifKontrol()) {
       let miktar = 0, eksik = 0, fazla = 0, var_ = false;
       for (const it of k.items) {
         if (it.kod.toUpperCase() !== code || (renk && it.renk.toUpperCase() !== renk)) continue;
         var_ = true; miktar += it.miktar; eksik += it.eksik; fazla += it.fazla;
       }
-      if (var_) out.push({ irs: k.irs, sevk: k.sevk, kaynak: k.kaynakAd, miktar, eksik, fazla, geldi: teslim.has(k.irs) });
+      if (var_) out.push({ irs: k.irs, sevk: k.sevk, kaynak: k.kaynakAd, kaynakKod: k.kaynakKod, miktar, eksik, fazla, geldi: teslim.has(k.irs) });
     }
     return out.sort((a, b) => a.sevk.localeCompare(b.sevk) || a.irs.localeCompare(b.irs));
   }
@@ -470,11 +507,19 @@ td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
   function aciklama(raw, fark) {
     const { code, renk } = splitSku(raw);
     if (!fark) return 'Sayım ile envanter eşit, fark yok.';
-    const irs = irsaliyelerOf(code, renk).filter(x => x.miktar > 0);
+    const hepsi = irsaliyelerOf(code, renk);
+    const irs = hepsi.filter(x => x.miktar > 0);
     const kod = renk ? `${code} (renk ${renk})` : code;
-    if (!irs.length) return `${kod} için kontrol listesinde irsaliye bulunamadı.`;
     const adet = n => `${fmt(n)} adet`;
-    const tarih = x => trDate(x.sevk);
+    const tarih = x => `${trDate(x.sevk)}, ${x.kaynak.replace(/\s+/g, ' ').trim()}`;
+    // Eksi miktarlı düzeltme / iade irsaliyeleri her zaman ayrıca yazılır
+    const duz = hepsi.filter(x => x.miktar < 0);
+    const ek = duz.length ? ` Ayrıca düzeltme/iade irsaliyeleri: ${duz.map(x => `${x.irs} (${tarih(x)}, ${fmt(x.miktar)} adet)`).join(', ')}.` : '';
+    if (!irs.length) return `${kod} için kontrol listesinde gelen irsaliye bulunamadı.` + ek;
+    return aciklamaFark(irs, fark, adet, tarih) + ek;
+  }
+
+  function aciklamaFark(irs, fark, adet, tarih) {
     if (fark < 0) {
       const ihtiyac = -fark;
       // Gelmemiş ama sisteme girmiş (tam ya da kısmen kapatılmış) irsaliyeler
@@ -534,7 +579,7 @@ td.wrap-cell { white-space: normal; min-width: 320px; max-width: 560px; }
       // Sayım dökümündeki "1BTNCR0106150." biçimi: madde kodu + renk kodu + beden
       const { code, renk } = splitSku(raw);
       const lines = [];
-      for (const k of kontrol.values()) {
+      for (const k of aktifKontrol()) {
         const g = new Map();
         for (const it of k.items) {
           if (it.kod.toUpperCase() !== code || (renk && it.renk.toUpperCase() !== renk)) continue;
