@@ -91,13 +91,34 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
 .empty b { color: var(--fg); }
 .more { padding: 10px; text-align: center; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 7px; font-size: 13px; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab { font: inherit; font-weight: 600; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 14px; color: var(--muted); cursor: pointer; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.panel { display: grid; gap: 16px; }
+.wrap > *, .panel > *, .drop > * { min-width: 0; }
+.sku-input { display: grid; gap: 8px; }
+.sku-input textarea { font-family: var(--font-mono); font-size: 13px; width: 100%; min-height: 84px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); resize: vertical; }
+.sku-input textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sku-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: grid; min-width: 0; }
+.sku-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.sku-head h3 { margin: 0; font-family: var(--font-mono); font-size: 15px; }
+.sku-head .ad { color: var(--muted); }
+.sku-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+.sku-sum div { background: var(--surface); padding: 8px 14px; display: grid; }
+.sku-sum span { font-size: 12px; color: var(--muted); }
+.sku-sum b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.sku-sum .okv { color: var(--ok); } .sku-sum .badv { color: var(--bad); } .sku-sum .warnv { color: var(--warn); }
+.sku-card .inner { border: 0; border-radius: 0 0 10px 10px; }
+.sku-card.none { padding: 12px 14px; color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); padding: 8px 14px; border-top: 1px solid var(--line); }
 @media (prefers-reduced-motion: no-preference) { .stat, .btn { transition: border-color .15s, background .15s; } }
 </style>
 
 <div class="wrap">
   <header>
     <h1>İrsaliye Karşılaştırma</h1>
-    <p class="sub">Merkez transfer kontrol listesini, mağazanın teslim aldığı irsaliye listesiyle irsaliye numarasına göre eşleştirir. Her irsaliyenin ürün, miktar, eksik ve fazla satırları açılarak görülebilir.</p>
+    <p class="sub">SKU kodlarını gir, kontrol listesinde geçtiği her irsaliyeyi bulsun ve mal kabul (teslim) listesiyle karşılaştırsın. Sayımda çıkan eksik veya fazlanın hangi irsaliyeden kaynaklandığını gösterir.</p>
   </header>
 
   <section class="drop" id="drop">
@@ -110,9 +131,28 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
     <div class="files" id="files"></div>
   </section>
 
-  <section class="stats" id="stats" hidden></section>
+  <nav class="tabs" id="tabs" role="tablist" hidden>
+    <button class="tab" type="button" role="tab" data-t="sku" aria-selected="true">SKU sorgula</button>
+    <button class="tab" type="button" role="tab" data-t="irs" aria-selected="false">İrsaliye listesi</button>
+  </nav>
 
-  <section id="listArea" hidden>
+  <section class="panel" id="skuPanel" hidden>
+    <div class="sku-input">
+      <label for="skus" class="hint">SKU kodlarını yaz ya da yapıştır. Boşluk, virgül veya alt satırla ayırabilirsin. Büyük/küçük harf fark etmez.</label>
+      <textarea id="skus" placeholder="1KKASE0127&#10;1KYAST0143&#10;1KTMZL0015"></textarea>
+      <div class="drop-row">
+        <button class="btn" id="skuGo" type="button">Sorgula</button>
+        <button class="btn ghost" id="skuCopy" type="button" hidden>Sonucu kopyala</button>
+        <span class="count" id="skuCount"></span>
+      </div>
+    </div>
+    <div class="panel" id="skuOut"></div>
+  </section>
+
+  <div class="panel" id="irsPanel" hidden>
+  <section class="stats" id="stats"></section>
+
+  <section id="listArea">
     <div class="toolbar" style="margin-bottom:10px">
       <input type="search" id="q" placeholder="İrsaliye no, madde kodu, ürün adı, kargo kodu ara">
       <label for="d1">Sevk</label><input type="date" id="d1">
@@ -139,6 +179,7 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
       <div class="more" id="moreBox" hidden><button class="btn ghost" id="more" type="button">Daha fazla göster</button></div>
     </div>
   </section>
+  </div>
 
   <section class="table-box" id="emptyState">
     <div class="empty">
@@ -147,7 +188,8 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
         <li><b>Kontrol listesi</b>: “Merkez İle Transfer İrsaliyelerinin Kontrol Listesi” raporu (ürün satırlı).</li>
         <li><b>Teslim listesi</b>: Mağazanın teslim aldığı irsaliyeler (Sıra, İrsaliye No, Kargo Kodu, Statü sütunlu).</li>
       </ol>
-      <div>Sonuçta irsaliyeler üç gruba ayrılır: <span class="pill ok">Teslim alındı</span> <span class="pill bad">Teslim alınmadı</span> <span class="pill warn">Kontrol listesinde yok</span>. Eksik veya fazla miktar içeren irsaliyeler ayrıca filtrelenebilir.</div>
+      <div>Sonra SKU kodlarını girince her kod için geçtiği irsaliyeler, gönderilen ve teslim alınan miktar, eksik ve fazla ayrı ayrı listelenir.</div>
+      <div>İrsaliye listesi sekmesinde irsaliyeler üç gruba ayrılır: <span class="pill ok">Teslim alındı</span> <span class="pill bad">Teslim alınmadı</span> <span class="pill warn">Kontrol listesinde yok</span>. Eksik veya fazla miktar içeren irsaliyeler ayrıca filtrelenebilir.</div>
       <div>Dosyalar bilgisayarından dışarı gönderilmez, işlem tarayıcıda yapılır.</div>
     </div>
   </section>
@@ -270,9 +312,11 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
       };
     });
     const has = rows.length > 0;
-    $('#stats').hidden = $('#listArea').hidden = !has;
+    $('#tabs').hidden = !has;
     $('#emptyState').hidden = has;
+    showTab(has ? tab : null);
     drawStats(); draw();
+    if ($('#skus').value.trim()) skuQuery();
   }
 
   function drawStats() {
@@ -343,6 +387,82 @@ td.detail { background: var(--bg); padding: 12px 14px 16px 34px; white-space: no
     h += `<tr><td colspan="5"><b>Toplam</b></td><td class="num"><b>${fmt(k.miktar)}</b></td><td class="num e">${fmt(k.eksik)}</td><td class="num f">${fmt(k.fazla)}</td><td></td></tr></tbody></table></div></div>`;
     return h;
   }
+
+  // ---- SKU sorgu ----
+  let tab = 'sku', skuResult = [];
+  function showTab(t) {
+    if (t) tab = t;
+    document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', b.dataset.t === tab));
+    $('#skuPanel').hidden = !t || tab !== 'sku';
+    $('#irsPanel').hidden = !t || tab !== 'irs';
+  }
+
+  function skuQuery() {
+    const codes = [...new Set($('#skus').value.toLocaleUpperCase('tr-TR').replace(/İ/g, 'I').split(/[\s,;]+/).filter(Boolean))];
+    skuResult = codes.map(code => {
+      const lines = [];
+      for (const k of kontrol.values()) {
+        const g = new Map();
+        for (const it of k.items) {
+          if (it.kod.toUpperCase() !== code) continue;
+          const key = [it.renk, it.beden, it.stok, it.ref].join('|');
+          const e = g.get(key) || g.set(key, { ...it, satir: 0, miktar: 0, eksik: 0, fazla: 0 }).get(key);
+          e.satir++; e.miktar += it.miktar; e.eksik += it.eksik; e.fazla += it.fazla;
+        }
+        const s = teslim.get(k.irs);
+        for (const e of g.values()) lines.push({ ...e, irs: k.irs, sevk: k.sevk, kaynak: k.kaynakAd, s, durum: s ? 'ok' : 'bad', teslim: s?.teslim || '' });
+      }
+      lines.sort((a, b) => a.sevk.localeCompare(b.sevk) || a.irs.localeCompare(b.irs));
+      const sum = (f, d) => lines.filter(l => !d || l.durum === d).reduce((x, l) => x + l[f], 0);
+      return {
+        code, lines, ad: lines[0]?.ad || '',
+        irsSay: new Set(lines.map(l => l.irs)).size,
+        gonderilen: sum('miktar'), gelen: sum('miktar', 'ok'), gelmeyen: sum('miktar', 'bad'),
+        eksik: sum('eksik'), fazla: sum('fazla'),
+        eksikGelen: sum('eksik', 'ok'), fazlaGelen: sum('fazla', 'ok'),
+      };
+    });
+    drawSku();
+  }
+
+  function drawSku() {
+    const found = skuResult.filter(r => r.lines.length).length;
+    $('#skuCount').textContent = skuResult.length ? `${skuResult.length} SKU sorgulandı, ${found} tanesi kontrol listesinde bulundu` : '';
+    $('#skuCopy').hidden = !skuResult.length;
+    $('#skuOut').innerHTML = skuResult.map(r => {
+      if (!r.lines.length) return `<div class="sku-card none"><div><b class="mono">${esc(r.code)}</b>: kontrol listesindeki hiçbir irsaliyede bu SKU yok.</div></div>`;
+      const net = r.gelen - r.eksikGelen + r.fazlaGelen;
+      return `<article class="sku-card">
+        <div class="sku-head"><h3>${esc(r.code)}</h3><span class="ad">${esc(r.ad)}</span><span class="hint">${r.irsSay} irsaliye</span></div>
+        <div class="sku-sum">
+          <div><span>Gönderilen</span><b>${fmt(r.gonderilen) || 0}</b></div>
+          <div><span>Teslim alınan irsaliyelerde</span><b class="okv">${fmt(r.gelen) || 0}</b></div>
+          <div><span>Teslim alınmayan irsaliyelerde</span><b class="${r.gelmeyen ? 'badv' : ''}">${fmt(r.gelmeyen) || 0}</b></div>
+          <div><span>Eksik</span><b class="${r.eksik ? 'badv' : ''}">${fmt(r.eksik) || 0}</b></div>
+          <div><span>Fazla</span><b class="${r.fazla ? 'warnv' : ''}">${fmt(r.fazla) || 0}</b></div>
+          <div><span>Net gelen</span><b>${fmt(net) || 0}</b></div>
+        </div>
+        <div class="inner"><table><thead><tr><th>İrsaliye No</th><th>Durum</th><th>Sevk</th><th>Teslim</th><th>Kaynak Depo</th><th>Renk</th><th>Beden</th><th class="num">Satır</th><th class="num">Miktar</th><th class="num">Eksik</th><th class="num">Fazla</th><th>Sipariş Ref.</th><th>Kargo Kodu</th></tr></thead><tbody>
+        ${r.lines.map(l => `<tr class="${l.eksik || l.fazla ? 'has-diff' : ''}"><td class="mono">${esc(l.irs)}</td><td>${pill(l.durum)}</td><td class="num">${trDate(l.sevk)}</td><td class="num">${trDate(l.teslim)}</td><td>${esc(l.kaynak)}</td><td>${esc(l.renk)}</td><td>${esc(l.beden)}</td><td class="num">${l.satir}</td><td class="num">${fmt(l.miktar)}</td><td class="num e">${fmt(l.eksik)}</td><td class="num f">${fmt(l.fazla)}</td><td class="mono">${esc(l.ref)}</td><td class="mono">${esc(l.s ? l.s.kargo[0] : '')}</td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="note">Net gelen = teslim alınan irsaliyelerdeki miktar − bu irsaliyelerdeki eksik + fazla. Teslim alınmayan irsaliye, teslim listesinde numarası olmayan irsaliyedir. Eksi miktarlı satırlar düzeltme irsaliyesidir.</div>
+      </article>`;
+    }).join('');
+  }
+
+  $('#tabs').onclick = e => { const b = e.target.closest('.tab'); if (b) showTab(b.dataset.t); };
+  $('#skuGo').onclick = skuQuery;
+  $('#skus').onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) skuQuery(); };
+  $('#skuCopy').onclick = () => {
+    const lab = { ok: 'Teslim alındı', bad: 'Teslim alınmadı' };
+    const out = ['SKU\tAçıklama\tİrsaliye No\tDurum\tSevk Tarihi\tTeslim Tarihi\tKaynak Depo\tRenk\tBeden\tMiktar\tEksik\tFazla\tSipariş Ref.\tKargo Kodu'];
+    for (const r of skuResult) {
+      if (!r.lines.length) { out.push([r.code, 'Kontrol listesinde yok'].join('\t')); continue; }
+      for (const l of r.lines) out.push([r.code, l.ad, l.irs, lab[l.durum], trDate(l.sevk), trDate(l.teslim), l.kaynak, l.renk, l.beden, l.miktar || '', l.eksik || '', l.fazla || '', l.ref, l.s ? l.s.kargo[0] : ''].join('\t'));
+      out.push([r.code, 'TOPLAM', '', '', '', '', '', '', '', r.gonderilen, r.eksik || '', r.fazla || '', '', ''].join('\t'));
+    }
+    navigator.clipboard.writeText(out.join('\n')).then(() => toast('Sonuç kopyalandı, Excel’e yapıştırabilirsin.'), () => toast('Kopyalanamadı. Tarayıcı panoya erişime izin vermedi.'));
+  };
 
   function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 2200); }
 
